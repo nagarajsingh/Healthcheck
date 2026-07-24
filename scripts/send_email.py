@@ -14,8 +14,18 @@ def split_addresses(value: str) -> List[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--html", default="output/health-report.html")
-    parser.add_argument("--subject-file", default="output/email-subject.txt")
+    parser.add_argument(
+        "--html",
+        "--html-file",
+        dest="html",
+        default="output/health-report.html",
+        help="Path to the generated HTML health report",
+    )
+    parser.add_argument(
+        "--subject-file",
+        default="output/email-subject.txt",
+        help="Path to the generated email subject file",
+    )
     args = parser.parse_args()
 
     smtp_host = os.environ["SMTP_HOST"]
