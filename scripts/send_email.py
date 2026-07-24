@@ -23,7 +23,9 @@ def first_env(*names: str, default: str = "") -> str:
 def required_env(*names: str) -> str:
     value = first_env(*names)
     if not value:
-        raise RuntimeError(f"Required environment variable is missing: {' or '.join(names)}")
+        raise RuntimeError(
+            f"Required environment variable is missing: {' or '.join(names)}"
+        )
     return value
 
 
@@ -44,11 +46,33 @@ def main() -> int:
     args = parser.parse_args()
 
     smtp_host = required_env("SMTP_HOST")
-    smtp_port = int(first_env("SMTP_PORT", default="25"))
+
+    try:
+        smtp_port = int(first_env("SMTP_PORT", default="25"))
+    except ValueError as exc:
+        raise RuntimeError("SMTP_PORT must be a valid integer") from exc
+
     smtp_username = first_env("SMTP_USERNAME")
     smtp_password = first_env("SMTP_PASSWORD")
-    starttls = first_env("SMTP_STARTTLS", default="false").lower() == "true"
-    sender = required_env("MAIL_FROM", "MASHREQ_EMAIL_FROM")
+    starttls = first_env("SMTP_STARTTLS", default="false").lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+    }
+
+    # Existing relay configuration uses SMTP_USERNAME as the sender address.
+    sender = first_env(
+        "MAIL_FROM",
+        "MASHREQ_EMAIL_FROM",
+        "SMTP_USERNAME",
+    )
+    if not sender:
+        raise RuntimeError(
+            "Required sender is missing: configure MAIL_FROM, "
+            "MASHREQ_EMAIL_FROM, or SMTP_USERNAME"
+        )
+
     recipients = split_addresses(required_env("MAIL_TO", "MASHREQ_EMAIL_TO"))
     bcc = split_addresses(first_env("MAIL_BCC", "MASHREQ_EMAIL_BCC"))
 
@@ -72,19 +96,28 @@ def main() -> int:
     if bcc:
         message["Bcc"] = ", ".join(bcc)
     message["Subject"] = subject
-    message.set_content("The Kubernetes health report is available in the HTML part of this email.")
+    message.set_content(
+        "The Kubernetes health report is available in the HTML part of this email."
+    )
     message.add_alternative(html, subtype="html")
 
     with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as smtp:
         smtp.ehlo()
+
         if starttls:
             smtp.starttls()
             smtp.ehlo()
-        if smtp_username:
+
+        # Port 25 relay commonly needs no authentication. Authenticate only when
+        # both username and password are configured.
+        if smtp_username and smtp_password:
             smtp.login(smtp_username, smtp_password)
+
         smtp.send_message(message, to_addrs=recipients + bcc)
 
     print(f"Email sent to {', '.join(recipients)}")
+    if bcc:
+        print(f"BCC sent to {', '.join(bcc)}")
     return 0
 
 
