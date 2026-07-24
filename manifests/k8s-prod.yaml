@@ -58,6 +58,9 @@ kind: CronJob
 metadata:
   name: kubernetes-health-check
   namespace: health-check-prod
+  labels:
+    app: kubernetes-health-check
+    environment: prod
 spec:
   schedule: "30 7 * * *"
   timeZone: "Asia/Dubai"
@@ -80,15 +83,44 @@ spec:
             - name: docker-secret
           containers:
             - name: health-check
-              image: mashrequae.azurecr.io/kubernetes-health-check:prod
+              image: IMAGE_PLACEHOLDER
               imagePullPolicy: Always
+              command: ["/bin/sh", "-c"]
               args:
-                - "--config"
-                - "/config/environments.yaml"
-                - "--template-dir"
-                - "/app/templates"
-                - "--output-dir"
-                - "/app/output"
+                - |
+                  set -eu
+                  echo "Starting Kubernetes health check..."
+                  rm -rf /app/output/*
+                  mkdir -p /app/output
+
+                  python /app/scripts/collect_health.py \
+                    --config /config/environments.yaml \
+                    --template-dir /app/templates \
+                    --output-dir /app/output
+
+                  echo "Generated files:"
+                  ls -la /app/output
+                  test -s /app/output/health-report.html
+                  test -s /app/output/health-report.json
+                  test -s /app/output/email-subject.txt
+
+                  echo "===== HEALTH REPORT JSON START ====="
+                  cat /app/output/health-report.json
+                  echo "===== HEALTH REPORT JSON END ====="
+
+                  python /app/scripts/send_email.py \
+                    --html-file /app/output/health-report.html \
+                    --subject-file /app/output/email-subject.txt
+
+                  echo "Kubernetes health check completed successfully."
+              env:
+                - name: TZ
+                  value: "Asia/Dubai"
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+              envFrom:
+                - secretRef:
+                    name: health-check-email
               resources:
                 requests:
                   cpu: "250m"
