@@ -1,0 +1,61 @@
+trigger: none
+
+pr:
+  branches:
+    include:
+      - main
+
+parameters:
+  - name: deployEnvironment
+    displayName: Deployment Environment
+    type: string
+    default: dev
+    values:
+      - dev
+      - prod
+
+variables:
+  ACR_LOGIN_SERVER: mashrequae.azurecr.io
+  IMAGE_REPOSITORY: kubernetes-health-check
+  IMAGE_TAG: $(Build.BuildId)
+
+stages:
+  - stage: Validate
+    jobs:
+      - job: ValidateFiles
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.11'
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+              python -m py_compile scripts/collect_health.py scripts/send_email.py
+              python - <<'PY'
+              import yaml
+              for path in ('config/environments.yaml', 'manifests/k8s-dev.yaml', 'manifests/k8s-prod.yaml'):
+                  with open(path, encoding='utf-8') as handle:
+                      list(yaml.safe_load_all(handle))
+                  print(f'Validated {path}')
+              PY
+            displayName: Validate Python and YAML
+
+  - stage: Build
+    dependsOn: Validate
+    jobs:
+      - job: BuildImage
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - script: |
+              docker build -t $(ACR_LOGIN_SERVER)/$(IMAGE_REPOSITORY):$(IMAGE_TAG) .
+            displayName: Build container image
+          # Add your Docker/ACR service connection before enabling push.
+          # - task: Docker@2
+          #   inputs:
+          #     command: push
+          #     repository: $(IMAGE_REPOSITORY)
+          #     containerRegistry: <ACR_SERVICE_CONNECTION>
+          #     tags: $(IMAGE_TAG)
