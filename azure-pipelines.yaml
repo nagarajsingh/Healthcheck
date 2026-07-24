@@ -1,61 +1,191 @@
 trigger: none
-
-pr:
-  branches:
-    include:
-      - main
+pr: none
 
 parameters:
-  - name: deployEnvironment
-    displayName: Deployment Environment
-    type: string
-    default: dev
-    values:
-      - dev
-      - prod
+- name: environment
+  displayName: Environment
+  type: string
+  default: dev
+  values:
+  - dev
+  - prod
 
 variables:
+  IMAGE_NAME: nonprod-health-report
   ACR_LOGIN_SERVER: mashrequae.azurecr.io
-  IMAGE_REPOSITORY: kubernetes-health-check
-  IMAGE_TAG: $(Build.BuildId)
+  ACR_SERVICE_CONNECTION: azure-devops-acr-rbg-prod-CorpCore-Titan-DevOps
 
-stages:
-  - stage: Validate
-    jobs:
-      - job: ValidateFiles
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: UsePythonVersion@0
-            inputs:
-              versionSpec: '3.11'
-          - script: |
-              python -m pip install --upgrade pip
-              pip install -r requirements.txt
-              python -m py_compile scripts/collect_health.py scripts/send_email.py
-              python - <<'PY'
-              import yaml
-              for path in ('config/environments.yaml', 'manifests/k8s-dev.yaml', 'manifests/k8s-prod.yaml'):
-                  with open(path, encoding='utf-8') as handle:
-                      list(yaml.safe_load_all(handle))
-                  print(f'Validated {path}')
-              PY
-            displayName: Validate Python and YAML
+  ${{ if eq(parameters.environment, 'dev') }}:
+    K8S_NAMESPACE: health-check-dev
+    K8S_MANIFEST: manifests/k8s-dev.yaml
+    CONFIGMAP_MANIFEST: manifests/configmap.yaml
+    K8S_SERVICE_CONNECTION: mashreq-titan-non-prod-DevOps
+    AGENT_POOL: TitanNonProd-Release
+    AGENT_NAME: nilaunlu1cmvmsrv-agent1
+    IMAGE_TAG_PREFIX: dev
 
-  - stage: Build
-    dependsOn: Validate
-    jobs:
-      - job: BuildImage
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - script: |
-              docker build -t $(ACR_LOGIN_SERVER)/$(IMAGE_REPOSITORY):$(IMAGE_TAG) .
-            displayName: Build container image
-          # Add your Docker/ACR service connection before enabling push.
-          # - task: Docker@2
-          #   inputs:
-          #     command: push
-          #     repository: $(IMAGE_REPOSITORY)
-          #     containerRegistry: <ACR_SERVICE_CONNECTION>
-          #     tags: $(IMAGE_TAG)
+  ${{ if eq(parameters.environment, 'prod') }}:
+    K8S_NAMESPACE: health-check-prod
+    K8S_MANIFEST: manifests/k8s-prod.yaml
+    K8S_SERVICE_CONNECTION: mashreq-titan-prod-DevOps
+    AGENT_POOL: TitanProd-Release
+    AGENT_NAME: YOUR_PROD_AGENT
+    IMAGE_TAG_PREFIX: prod
+
+pool:
+  name: $(AGENT_POOL)
+  demands:
+  - Agent.Name -equals $(AGENT_NAME)
+
+steps:
+- checkout: self
+  clean: true
+  fetchDepth: 0
+
+- bash: |
+    set -euo pipefail
+
+    python -m py_compile \
+      scripts/collect_health.py \
+      scripts/send_email.py
+
+    grep -q -- "--html-file" scripts/send_email.py
+
+    test -f "$(K8S_MANIFEST)"
+
+    if [ "${{ parameters.environment }}" = "dev" ]; then
+      test -f "$(CONFIGMAP_MANIFEST)"
+      test -f manifests/secrets.yaml
+    fi
+
+    echo "Source validation completed."
+    git log -3 --oneline
+  displayName: Validate Source
+
+- task: Docker@2
+  displayName: Build and Push Image
+  inputs:
+    command: buildAndPush
+    containerRegistry: $(ACR_SERVICE_CONNECTION)
+    repository: $(IMAGE_NAME)
+    dockerfile: "$(Build.SourcesDirectory)/Dockerfile"
+    buildContext: "$(Build.SourcesDirectory)"
+    tags: |
+      $(IMAGE_TAG_PREFIX)-latest
+      $(IMAGE_TAG_PREFIX)-$(Build.BuildId)
+
+- task: Kubernetes@1
+  displayName: Login to Kubernetes
+  inputs:
+    connectionType: Kubernetes Service Connection
+    kubernetesServiceEndpoint: $(K8S_SERVICE_CONNECTION)
+    command: login
+
+- bash: |
+    set -euo pipefail
+
+    required_variables=(SMTP_HOST MAIL_FROM MAIL_TO)
+
+    for variable_name in "${required_variables[@]}"; do
+      if [ -z "${!variable_name:-}" ]; then
+        echo "Missing required Azure DevOps variable: $variable_name"
+        exit 1
+      fi
+    done
+
+    echo "Email configuration variables are available."
+  displayName: Validate Email Variables
+  env:
+    SMTP_HOST: $(SMTP_HOST)
+    MAIL_FROM: $(MAIL_FROM)
+    MAIL_TO: $(MAIL_TO)
+
+- bash: |
+    set -euo pipefail
+
+    NAMESPACE="$(K8S_NAMESPACE)"
+
+    kubectl create namespace "$NAMESPACE" \
+      --dry-run=client \
+      -o yaml | kubectl apply -f -
+
+    kubectl create secret generic health-check-email \
+      --namespace "$NAMESPACE" \
+      --from-literal=SMTP_HOST="$SMTP_HOST" \
+      --from-literal=SMTP_PORT="${SMTP_PORT:-25}" \
+      --from-literal=SMTP_STARTTLS="${SMTP_STARTTLS:-false}" \
+      --from-literal=SMTP_USERNAME="${SMTP_USERNAME:-}" \
+      --from-literal=SMTP_PASSWORD="${SMTP_PASSWORD:-}" \
+      --from-literal=MAIL_FROM="$MAIL_FROM" \
+      --from-literal=MAIL_TO="$MAIL_TO" \
+      --from-literal=MAIL_BCC="${MAIL_BCC:-}" \
+      --dry-run=client \
+      -o yaml | kubectl apply -f -
+
+    echo "Email Secret created or updated."
+  displayName: Create Email Secret
+  env:
+    SMTP_HOST: $(SMTP_HOST)
+    SMTP_PORT: $(SMTP_PORT)
+    SMTP_STARTTLS: $(SMTP_STARTTLS)
+    SMTP_USERNAME: $(SMTP_USERNAME)
+    SMTP_PASSWORD: $(SMTP_PASSWORD)
+    MAIL_FROM: $(MAIL_FROM)
+    MAIL_TO: $(MAIL_TO)
+    MAIL_BCC: $(MAIL_BCC)
+
+- bash: |
+    set -euo pipefail
+
+    IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(IMAGE_TAG_PREFIX)-$(Build.BuildId)"
+    DEPLOY_FILE="$(Build.ArtifactStagingDirectory)/k8s-deploy.yaml"
+
+    cp "$(Build.SourcesDirectory)/$(K8S_MANIFEST)" "$DEPLOY_FILE"
+    sed -i "s|IMAGE_PLACEHOLDER|$IMAGE|g" "$DEPLOY_FILE"
+
+    if [ "${{ parameters.environment }}" = "dev" ]; then
+      kubectl apply -f "$(Build.SourcesDirectory)/$(CONFIGMAP_MANIFEST)"
+    fi
+
+    kubectl apply -f "$DEPLOY_FILE"
+
+    kubectl get cronjob kubernetes-health-check \
+      -n "$(K8S_NAMESPACE)" \
+      -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].image}{"\n"}'
+  displayName: Deploy Manifests
+
+- bash: |
+    set -euo pipefail
+
+    NAMESPACE="$(K8S_NAMESPACE)"
+    JOB_NAME="health-check-$(Build.BuildId)"
+
+    kubectl delete job "$JOB_NAME" \
+      -n "$NAMESPACE" \
+      --ignore-not-found=true
+
+    kubectl create job \
+      --from=cronjob/kubernetes-health-check \
+      "$JOB_NAME" \
+      -n "$NAMESPACE"
+
+    echo "Waiting for health-check Job..."
+
+    if ! kubectl wait \
+      --for=condition=complete \
+      "job/$JOB_NAME" \
+      -n "$NAMESPACE" \
+      --timeout=15m; then
+
+      kubectl describe job "$JOB_NAME" -n "$NAMESPACE" || true
+      kubectl logs "job/$JOB_NAME" \
+        -n "$NAMESPACE" \
+        --all-containers=true \
+        --tail=500 || true
+      exit 1
+    fi
+
+    kubectl logs "job/$JOB_NAME" \
+      -n "$NAMESPACE" \
+      --all-containers=true
+  displayName: Run Health Check
