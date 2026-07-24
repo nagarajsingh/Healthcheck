@@ -1,0 +1,83 @@
+report:
+  title: "Non-Prod Kubernetes Environment Status"
+  timezone: "Asia/Kolkata"
+  filesystem_threshold_percent: 75
+  filesystem_warning_threshold_percent: 90
+  request_timeout_seconds: 20
+
+environments:
+  - name: "H2H-DEV"
+    namespace: "h2h-dev"
+    filesystem:
+      enabled: true
+      mount_path: "/h2hnetapp"
+      preferred_pod_prefix: "debug-shell"
+      threshold_percent: 75
+      warning_threshold_percent: 90
+    streams:
+      enabled: true
+      api_url: "https://scdf-dev.mashreqdev.com/streams/definitions"
+      transport: "curl"
+      verify_ssl: false
+      page_size: 200
+      expected_descriptions:
+        - "AE"
+        - "BH"
+        - "EG"
+        - "KW"
+        - "QA"
+    titanms_legal_entities:
+      enabled: true
+      url: "https://titanms-dev.mashreqdev.com/login"
+      verify_ssl: false
+      timeout_seconds: 30
+      expected_entities:
+        - "AE"
+        - "BH"
+        - "EG"
+        - "KW"
+        - "QA"
+      selectors:
+        dropdown: "select"
+        options: "select option"
+      ignored_options:
+        - "Select"
+        - "Select Legal Entity"
+        - "Legal Entity"
+        - "Choose Legal Entity"
+        - "-- Select --"
+    endpoints:
+      enabled: false
+      items: []
+
+  - name: "IPP-SIT"
+    namespace: "ip-sit"
+    filesystem:
+      enabled: true
+      mount_paths:
+        - "/mashnetapp-r2uat"
+        - "/nfsobp"
+      preferred_pod_prefix: "payroll-api"
+      threshold_percent: 75
+      warning_threshold_percent: 90
+    endpoints:
+      enabled: false
+      items: []
+
+  - name: "COLLECTIONS-SIT"
+    namespace: "titan-sit"
+    filesystem:
+      enabled: true
+      mount_paths:
+        - "/vtmaster"
+        - "/vtchequecash"
+        - "/vtdashrep"
+        - "/vtcashdelivery"
+        - "/vtdds"
+        - "/vtcustomer"
+      preferred_pod_prefix: "collections-batch-01-service"
+      threshold_percent: 75
+      warning_threshold_percent: 90
+    endpoints:
+      enabled: false
+      items: []
