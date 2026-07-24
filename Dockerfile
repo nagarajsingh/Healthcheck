@@ -1,4 +1,6 @@
-FROM python:3.11-slim
+FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
+
+ARG KUBECTL_VERSION=v1.30.14
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -6,19 +8,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
-    && curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key \
-       | gpg --dearmor -o /usr/share/keyrings/kubernetes-apt-keyring.gpg \
-    && echo 'deb [signed-by=/usr/share/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' \
-       > /etc/apt/sources.list.d/kubernetes.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends kubectl \
-    && rm -rf /var/lib/apt/lists/*
+# Install kubectl directly instead of using APT. This avoids failures when
+# corporate proxies block Ubuntu archive repositories over plain HTTP.
+RUN curl -fsSLo /usr/local/bin/kubectl \
+      "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+    && chmod +x /usr/local/bin/kubectl \
+    && kubectl version --client=true
 
 COPY requirements.txt /app/requirements.txt
+
+# The Playwright base image already includes Chromium and all required Linux
+# libraries, so do not run `playwright install --with-deps` here.
 RUN pip install --no-cache-dir -r /app/requirements.txt \
-    && python -m playwright install --with-deps chromium
+    && python -c "from playwright.sync_api import sync_playwright; print('Playwright import successful')"
 
 COPY scripts/ /app/scripts/
 COPY templates/ /app/templates/
@@ -26,7 +28,7 @@ COPY config/ /app/config/
 
 RUN useradd --uid 10001 --create-home healthcheck \
     && mkdir -p /app/output \
-    && chown -R healthcheck:healthcheck /app /ms-playwright
+    && chown -R healthcheck:healthcheck /app
 
 USER 10001
 
