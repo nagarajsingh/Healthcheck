@@ -12,6 +12,21 @@ def split_addresses(value: str) -> List[str]:
     return [item.strip() for item in value.replace(";", ",").split(",") if item.strip()]
 
 
+def first_env(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return default
+
+
+def required_env(*names: str) -> str:
+    value = first_env(*names)
+    if not value:
+        raise RuntimeError(f"Required environment variable is missing: {' or '.join(names)}")
+    return value
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -28,20 +43,28 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    smtp_host = os.environ["SMTP_HOST"]
-    smtp_port = int(os.getenv("SMTP_PORT", "25"))
-    smtp_username = os.getenv("SMTP_USERNAME", "")
-    smtp_password = os.getenv("SMTP_PASSWORD", "")
-    starttls = os.getenv("SMTP_STARTTLS", "false").lower() == "true"
-    sender = os.environ["MAIL_FROM"]
-    recipients = split_addresses(os.environ["MAIL_TO"])
-    bcc = split_addresses(os.getenv("MAIL_BCC", ""))
+    smtp_host = required_env("SMTP_HOST")
+    smtp_port = int(first_env("SMTP_PORT", default="25"))
+    smtp_username = first_env("SMTP_USERNAME")
+    smtp_password = first_env("SMTP_PASSWORD")
+    starttls = first_env("SMTP_STARTTLS", default="false").lower() == "true"
+    sender = required_env("MAIL_FROM", "MASHREQ_EMAIL_FROM")
+    recipients = split_addresses(required_env("MAIL_TO", "MASHREQ_EMAIL_TO"))
+    bcc = split_addresses(first_env("MAIL_BCC", "MASHREQ_EMAIL_BCC"))
 
-    if not recipients:
-        raise RuntimeError("MAIL_TO does not contain any recipient")
+    html_path = Path(args.html)
+    subject_path = Path(args.subject_file)
 
-    html = Path(args.html).read_text(encoding="utf-8")
-    subject = Path(args.subject_file).read_text(encoding="utf-8").strip()
+    if not html_path.is_file():
+        raise FileNotFoundError(f"HTML report not found: {html_path}")
+    if not subject_path.is_file():
+        raise FileNotFoundError(f"Email subject file not found: {subject_path}")
+
+    html = html_path.read_text(encoding="utf-8")
+    subject = subject_path.read_text(encoding="utf-8").strip()
+
+    if not subject:
+        raise RuntimeError(f"Email subject file is empty: {subject_path}")
 
     message = EmailMessage()
     message["From"] = sender
