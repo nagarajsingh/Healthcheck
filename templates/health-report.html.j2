@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ title }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #222; }
+    h1 { margin-bottom: 4px; }
+    .generated { color: #666; margin-bottom: 24px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 28px; }
+    th, td { border: 1px solid #ddd; padding: 9px; text-align: left; vertical-align: top; }
+    th { background: #f4f4f4; }
+    .Green { background: #dff0d8; }
+    .Amber { background: #fff3cd; }
+    .Red { background: #f8d7da; }
+  </style>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+  <div class="generated">Generated at {{ generated_at }}</div>
+  {% for environment in environments %}
+    <h2>{{ environment.name }}</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Component</th>
+          <th>Count</th>
+          <th>Status</th>
+          <th>Comments</th>
+          <th>Health</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in environment.rows %}
+          <tr class="{{ row.health }}">
+            <td>{{ row.component }}</td>
+            <td>{{ row.count }}</td>
+            <td>{{ row.status }}</td>
+            <td>{{ row.comments }}</td>
+            <td>{{ row.health }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endfor %}
+</body>
+</html>
