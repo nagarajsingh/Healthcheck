@@ -37,87 +37,11 @@ roleRef:
   kind: ClusterRole
   name: health-check-dev-reader
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: health-check-dev-config
-  namespace: health-check-dev
-data:
-  environments.yaml: |
-    report:
-      title: "Non-Prod Kubernetes Environment Status"
-      timezone: "Asia/Kolkata"
-      filesystem_threshold_percent: 75
-      filesystem_warning_threshold_percent: 90
-      request_timeout_seconds: 20
-
-    environments:
-      - name: "H2H-DEV"
-        namespace: "h2h-dev"
-        filesystem:
-          enabled: true
-          mount_path: "/h2hnetapp"
-          preferred_pod_prefix: "debug-shell"
-          threshold_percent: 75
-          warning_threshold_percent: 90
-        streams:
-          enabled: true
-          api_url: "https://scdf-dev.mashreqdev.com/streams/definitions"
-          transport: "curl"
-          verify_ssl: false
-          page_size: 200
-          expected_descriptions: ["AE", "BH", "EG", "KW", "QA"]
-        titanms_legal_entities:
-          enabled: true
-          url: "https://titanms-dev.mashreqdev.com/login"
-          verify_ssl: false
-          timeout_seconds: 30
-          expected_entities: ["AE", "BH", "EG", "KW", "QA"]
-          selectors:
-            dropdown: "select"
-            options: "select option"
-          ignored_options:
-            - "Select"
-            - "Select Legal Entity"
-            - "Legal Entity"
-            - "Choose Legal Entity"
-            - "-- Select --"
-        endpoints:
-          enabled: false
-          items: []
-
-      - name: "IPP-SIT"
-        namespace: "ipp-sit"
-        filesystem:
-          enabled: true
-          mount_paths: ["/mashnetapp-r2uat", "/nfsobp"]
-          preferred_pod_prefix: "payroll-api"
-          threshold_percent: 75
-          warning_threshold_percent: 90
-        endpoints:
-          enabled: false
-          items: []
-
-      - name: "COLLECTIONS-SIT"
-        namespace: "titan-sit"
-        filesystem:
-          enabled: true
-          mount_paths: ["/vtmaster", "/vtchequecash", "/vtdashrep", "/vtcashdelivery", "/vtdds", "/vtcustomer"]
-          preferred_pod_prefix: "collections-batch-01-service"
-          threshold_percent: 75
-          warning_threshold_percent: 90
-        endpoints:
-          enabled: false
-          items: []
----
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: kubernetes-health-check
   namespace: health-check-dev
-  labels:
-    app: kubernetes-health-check
-    environment: dev
 spec:
   schedule: "30 7 * * *"
   timeZone: "Asia/Kolkata"
@@ -146,9 +70,9 @@ spec:
               args:
                 - |
                   set -eu
+
                   echo "Starting Kubernetes health check..."
                   rm -rf /app/output/*
-                  mkdir -p /app/output
 
                   python /app/scripts/collect_health.py \
                     --config /config/environments.yaml \
@@ -157,19 +81,12 @@ spec:
 
                   echo "Generated files:"
                   ls -la /app/output
-                  test -s /app/output/health-report.html
-                  test -s /app/output/health-report.json
-                  test -s /app/output/email-subject.txt
-
-                  echo "===== HEALTH REPORT JSON START ====="
-                  cat /app/output/health-report.json
-                  echo "===== HEALTH REPORT JSON END ====="
 
                   python /app/scripts/send_email.py \
                     --html-file /app/output/health-report.html \
                     --subject-file /app/output/email-subject.txt
 
-                  echo "Kubernetes health check completed successfully."
+                  echo "Health check completed successfully."
               env:
                 - name: TZ
                   value: "Asia/Kolkata"
