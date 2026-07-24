@@ -87,7 +87,7 @@ data:
           items: []
 
       - name: "IPP-SIT"
-        namespace: "ip-sit"
+        namespace: "ipp-sit"
         filesystem:
           enabled: true
           mount_paths: ["/mashnetapp-r2uat", "/nfsobp"]
@@ -115,6 +115,9 @@ kind: CronJob
 metadata:
   name: kubernetes-health-check
   namespace: health-check-dev
+  labels:
+    app: kubernetes-health-check
+    environment: dev
 spec:
   schedule: "30 7 * * *"
   timeZone: "Asia/Kolkata"
@@ -137,20 +140,48 @@ spec:
             - name: docker-secret
           containers:
             - name: health-check
-              image: mashrequae.azurecr.io/kubernetes-health-check:dev
+              image: IMAGE_PLACEHOLDER
               imagePullPolicy: Always
+              command: ["/bin/sh", "-c"]
               args:
-                - "--config"
-                - "/config/environments.yaml"
-                - "--template-dir"
-                - "/app/templates"
-                - "--output-dir"
-                - "/app/output"
+                - |
+                  set -eu
+                  echo "Starting Kubernetes health check..."
+                  rm -rf /app/output/*
+                  mkdir -p /app/output
+
+                  python /app/scripts/collect_health.py \
+                    --config /config/environments.yaml \
+                    --template-dir /app/templates \
+                    --output-dir /app/output
+
+                  echo "Generated files:"
+                  ls -la /app/output
+                  test -s /app/output/health-report.html
+                  test -s /app/output/health-report.json
+                  test -s /app/output/email-subject.txt
+
+                  echo "===== HEALTH REPORT JSON START ====="
+                  cat /app/output/health-report.json
+                  echo "===== HEALTH REPORT JSON END ====="
+
+                  python /app/scripts/send_email.py \
+                    --html-file /app/output/health-report.html \
+                    --subject-file /app/output/email-subject.txt
+
+                  echo "Kubernetes health check completed successfully."
               env:
+                - name: TZ
+                  value: "Asia/Kolkata"
+                - name: PYTHONUNBUFFERED
+                  value: "1"
                 - name: NO_PROXY
                   value: "localhost,127.0.0.1,.cluster.local,.svc,.mashreqdev.com,scdf-dev.mashreqdev.com,titanms-dev.mashreqdev.com"
                 - name: no_proxy
                   value: "localhost,127.0.0.1,.cluster.local,.svc,.mashreqdev.com,scdf-dev.mashreqdev.com,titanms-dev.mashreqdev.com"
+              envFrom:
+                - secretRef:
+                    name: health-check-email
               resources:
                 requests:
                   cpu: "250m"
